@@ -9,8 +9,12 @@ mod parser;
 mod pitch;
 mod stack;
 mod vm;
-#[cfg(target_arch = "wasm32")]
+// the author's local (untracked) wasm-bindgen layer; replaced by `worklet` when that feature is on
+#[cfg(all(target_arch = "wasm32", not(feature = "worklet")))]
 mod wasm;
+// C ABI for hosting in an AudioWorklet: `cargo build --lib --release --target wasm32-unknown-unknown --features worklet`
+#[cfg(feature = "worklet")]
+mod worklet;
 
 pub use limiter::Limiter;
 pub use vm::{Program, render};

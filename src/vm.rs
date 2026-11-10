@@ -18,6 +18,7 @@ pub struct Program {
     regions: HashMap<String, (usize, usize)>,
     frame: usize,
     position: f64,
+    external_bpm: Option<f32>,
     stack: Stack,
     phases: Stack<f64>,
     seed: u32,
@@ -41,13 +42,45 @@ impl Program {
             regions: HashMap::new(),
             frame: 0,
             position: 0.0,
+            external_bpm: None,
             stack: Stack::new(),
             phases: Stack::new(),
             seed: 0x9e3779b9,
         }
     }
 
+    /// Tempo supplied by a host (for example a shared clock). A `bpm` defined in
+    /// the patch itself takes priority over it.
+    pub fn set_external_bpm(&mut self, bpm: Option<f32>) {
+        self.external_bpm = bpm;
+    }
+
+    /// Position in cycles (bars) of the ambient clock, for syncing to a host.
+    pub fn set_position(&mut self, cycles: f64) {
+        if cycles.is_finite() {
+            self.position = cycles.max(0.0);
+        }
+    }
+
+    pub fn position(&self) -> f64 {
+        self.position
+    }
+
+    /// True when the patch defines its own `bpm` and so ignores the host tempo.
+    pub fn op_count(&self) -> usize {
+        self.ops.len()
+    }
+
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    pub fn defines_bpm(&self) -> bool {
+        self.bpm_slot.is_some()
+    }
+
     pub fn copy_state_from(&mut self, old: &Self) {
+        self.external_bpm = old.external_bpm;
         self.position = old.position;
         self.frame = old.frame;
         for (name, slot) in &self.slots {
@@ -165,8 +198,8 @@ fn poly_blamp(phase: f32, dt: f32) -> f32 {
     }
 }
 
-fn tempo(bpm_slot: Option<usize>, state: &[f32]) -> f32 {
-    let bpm = bpm_slot.map_or(DEFAULT_BPM, |slot| state[slot]);
+fn tempo(bpm_slot: Option<usize>, external: Option<f32>, state: &[f32]) -> f32 {
+    let bpm = bpm_slot.map_or(external.unwrap_or(DEFAULT_BPM), |slot| state[slot]);
     finite_or(bpm, DEFAULT_BPM).clamp(1.0, 999.0)
 }
 
@@ -255,6 +288,7 @@ pub fn render(prog: &mut Program, output: &mut [f32], sample_rate: u32) {
             }
             OpCode::Print => {
                 // TODO: send off audio thread
+                #[cfg(not(target_arch = "wasm32"))]
                 println!("{}", stack.top())
             }
             OpCode::Noise => {
@@ -328,11 +362,11 @@ pub fn render(prog: &mut Program, output: &mut [f32], sample_rate: u32) {
                 *stack.top_mut() = a + (read(whole + 1) - a) * (delay - whole as f32);
             }
             OpCode::SampleRate => stack.push(sample_rate as f32),
-            OpCode::Bar => stack.push(60.0 / tempo(prog.bpm_slot, &prog.state) * BEATS_PER_CYCLE),
+            OpCode::Bar => stack.push(60.0 / tempo(prog.bpm_slot, prog.external_bpm, &prog.state) * BEATS_PER_CYCLE),
         }
     }
 
-    let bpm = tempo(prog.bpm_slot, &prog.state);
+    let bpm = tempo(prog.bpm_slot, prog.external_bpm, &prog.state);
     prog.position += bpm as f64 / 60.0 / BEATS_PER_CYCLE as f64 / sample_rate as f64;
     prog.frame = prog.frame.wrapping_add(1);
 
