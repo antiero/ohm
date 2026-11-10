@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+[features]
+# C ABI used by Noodlr's AudioWorklet host (src/worklet.rs)
+worklet = []
+
 [lib]
 crate-type = ["cdylib", "rlib"]
 
